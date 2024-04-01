@@ -2,7 +2,25 @@
 name = "Ken-Revm"
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
+description = "A blazingly fast in-memory Ethereum Virtual Machine (EVM) emulator written in Rust"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rand = "0.9.0-alpha.1"
+
+tokio = { version = "1", features = ["full"] }
+colored = "2.0.4"
+ethers = "2.0.7"
+mem_storage = "0.1.1"
+primitive-types = "0.12.1"
+hex = "0.4"
+rusty-hook = "0.11.2"
+serde = { version = "1.0.195", features = ["derive"] }
+serde_json = "1.0.111"
+alloy-primitives = "0.6.2"
+alloy-rlp = "0.3.4"
+revm-primitives = "2.0.0"
+dotenv = "0.15.0"
+reqwest = "0.11.26"

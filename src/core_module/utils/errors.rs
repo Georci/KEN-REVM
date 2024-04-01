@@ -1,4 +1,5 @@
 use std::fmt;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
 pub enum ExecutionError {
@@ -25,6 +26,9 @@ pub enum ExecutionError {
     RevertWithoutData,
     NotImplemented(u8),
 }
+
+
+impl std::error::Error for ExecutionError {}
 
 impl fmt::Display for ExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -60,8 +64,6 @@ impl fmt::Display for ExecutionError {
         }
     }
 }
-
-impl std::error::Error for ExecutionError {}
 
 impl PartialEq for ExecutionError {
     fn eq(&self, other: &Self) -> bool {
