@@ -22,11 +22,14 @@ pub fn pad_left(bytes: &[u8]) -> [u8; 32] {
     padded
 }
 
+//
 pub fn pad_left_one(bytes: &[u8]) -> [u8; 32] {
     let mut padded = [255u8; 32];
     padded[32 - bytes.len()..].copy_from_slice(bytes);
     padded
 }
+
+
 
 /// Pad a [u8] with no particular length to 32 bytes to return a [u8; 32]
 /// It adds zeros to the right of the [u8] instead of the left

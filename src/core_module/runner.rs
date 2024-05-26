@@ -1,5 +1,6 @@
 use crate::core_module::utils::bytes::{_hex_string_to_bytes};
 use std::collections::HashMap;
+use std::fmt::Display;
 use ethers::types::U256;
 
 use super::memory::Memory;
@@ -131,6 +132,7 @@ impl Runner {
         calldata: Option<Vec<u8>>,
         state: Option<EvmState>,
         evm_context: Option<EvmContext>,
+        // KEN: Compared to calldata, calldata_info includes newInputData and attack_contractAddress.
         calldata_info: Option<CallDataInfo>
 
     ) -> Self {
@@ -248,6 +250,7 @@ impl Runner {
         } else {
             HashMap::default()
         };
+        println!("storage is : {:?}",storage);
 
         let code_hash = if let Some(code_hash) = account_state_ex.code_hash.clone() {
             code_hash
@@ -273,12 +276,22 @@ impl Runner {
         }
     }
 
-    pub fn interpret(
+    pub fn interpret1(
         &mut self,
         bytecode: Vec<u8>,
         initial_interpretation: bool,
+        is_creation:bool
     ) -> Result<(), ExecutionError> {
+
         // Set the bytecode
+        let mut runtimecode = vec![];
+        if let Some(pos) = bytecode.iter().position(|&x| x == 254) {
+            // 取出254后面的元素并转换为新的向量
+            runtimecode = bytecode[pos + 1..].to_vec();
+        } else {
+            println!("数组中没有找到254");
+        }
+        println!("runtime code {:?}", &runtimecode);
         self.bytecode = bytecode;
 
         // Check if the bytecode is empty
@@ -288,8 +301,71 @@ impl Runner {
             return Err(ExecutionError::EmptyByteCode);
         }
 
+        // 如果是初次执行，则将执行的bytecode写入到对应的地址下。
         if initial_interpretation {
             // Set the runner address code
+            let put_code_result = self.state.put_code_at(self.address, runtimecode.clone());
+            if put_code_result.is_err() {
+                return Err(put_code_result.unwrap_err());
+            }
+        }
+
+        let mut error: Option<ExecutionError> = None;
+
+        // Interpret the bytecode
+        while self.pc < self.bytecode.len() {
+            let mut op_count = self.op_count;
+            let mut flag = [0u8; 30];
+            for i in 1..30 {
+                if self.call_depth.eq(&i) && flag[i as usize] == 0 {
+                    flag[i as usize] = 1;
+                    op_count += i as u128;
+                }
+            }
+
+            // Interpret an opcode
+            let opcode = get_op_code(self.bytecode[self.pc]);
+            self.op_list.push(opcode);
+            let a = get_op_code(self.bytecode[self.pc]);
+            // println!("op {:?}",a);
+            // println!("self.stack is :\n{}",self.stack);
+
+            let result = self.interpret_op_code(self.bytecode[self.pc]);
+            if result.is_err() {
+                error = Some(result.unwrap_err());
+                break;
+            }
+            self.op_count += 1;
+        }
+        if error.is_some() {
+            return Err(error.unwrap());
+        }
+
+        self.pc = 0;
+        Ok(())
+    }
+
+    pub fn interpret(
+        &mut self,
+        bytecode: Vec<u8>,
+        initial_interpretation: bool
+    ) -> Result<(), ExecutionError> {
+        let mut Needcode = vec![0u8];
+        // Set the bytecode
+
+        self.bytecode = bytecode;
+
+        // Check if the bytecode is empty
+        if self.bytecode.is_empty() {
+            // Return an error
+            println!("{}: {}", "ERROR: ".red(), ExecutionError::EmptyByteCode);
+            return Err(ExecutionError::EmptyByteCode);
+        }
+
+        // 如果是初次执行，则将执行的bytecode写入到对应的地址下。
+        if initial_interpretation {
+            // Set the runner address code
+            println!("self.bytecode is :{:?}",self.bytecode.clone());
             let put_code_result = self.state.put_code_at(self.address, self.bytecode.clone());
             if put_code_result.is_err() {
                 return Err(put_code_result.unwrap_err());
@@ -310,7 +386,26 @@ impl Runner {
             }
 
             // Interpret an opcode
+
+
             self.op_list.push(get_op_code(self.bytecode[self.pc]));
+            let a = get_op_code(self.bytecode[self.pc]);
+            // println!("self.op_list is :{:?}",a);
+            // println!("self.stack is :\n{}",self.stack);
+
+            if(get_op_code(self.bytecode[self.pc]).eq("PUSH20")){
+                println!("asadasdadsasd");
+            }
+            // let a = get_op_code(self.bytecode[self.pc]);
+            // println!("self.op_list is :{:?}",a);
+            // println!("self.stack is :\n{}",self.stack);
+            // self.debug_stack();
+            // if (a == "CALL"){
+            //     println!("self.memory is :{:?}",self.memory);
+            // }
+            // println!("Return data is :{:?}",self.returndata);
+
+
             let result = self.interpret_op_code(self.bytecode[self.pc]);
             if result.is_err() {
                 error = Some(result.unwrap_err());
@@ -318,6 +413,7 @@ impl Runner {
             }
             self.op_count += 1;
         }
+        println!("After exection is {:?}",self.state.codes);
 
         if error.is_some() {
 
@@ -381,6 +477,7 @@ impl Runner {
 
             // Interpret an opcode
             self.op_list.push(get_op_code(self.bytecode[self.pc]));
+            // println!("self.op_list is :{:?}",self.op_list);
             let result = self.interpret_op_code(self.bytecode[self.pc]);
             if result.is_err() {
                 error = Some(result.unwrap_err());
@@ -665,6 +762,7 @@ impl Runner {
 
         // Write the return data to the initial state
         self.returndata.heap = return_data;
+        println!("After call returndata is {:?}",self.returndata.heap);
 
         // Increment the nonce of the caller
         increment_nonce(self.address, self)?;

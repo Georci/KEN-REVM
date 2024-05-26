@@ -1,6 +1,6 @@
-
+use std::collections::{BTreeMap, HashMap};
 use crate::core_module::runner::Runner;
-use crate::core_module::state::EvmState;
+use crate::core_module::state::{AccountState, EvmState};
 use crate::core_module::utils::bytes::{to_h256};
 use ethers::prelude::{Provider};
 use ethers::providers::{Middleware, ProviderError, ProviderExt};
@@ -8,14 +8,22 @@ use ethers::types::{Address, TxHash};
 pub use serde::Deserialize;
 pub use serde::Serialize;
 use std::str::FromStr;
-use std::sync::Arc;
-use crate::core_module::context::account_state_ex_context::{get_accounts_state_tx, ISDiff};
+use std::sync::{Arc, Mutex};
+use crate::core_module::context::account_state_ex_context::{AccountStateEx, get_accounts_state_tx, ISDiff};
 use crate::core_module::context::evm_context::EvmContext;
 use crate::core_module::context::calldata_info::CallDataInfo;
 use crate::core_module::context::transaction_context::{get_transaction_content};
 use dotenv::dotenv;
-use std::env;
-use crate::bytes::_hex_string_to_bytes;
+use std::{env, fmt};
+use std::cell::RefCell;
+use std::fmt::Debug;
+use std::os::unix::process::parent_id;
+use std::rc::Rc;
+use ethers::types::Opcode::SHA3;
+use ethers::utils::keccak256;
+use hex::FromHex;
+use crate::bytes::{_hex_string_to_bytes, pad_left, to_h160};
+use crate::Memory;
 
 
 // 需要传入的数据为rpc, tx_hash, 要监控的函数字符串, 参数位置，(未解决的问题: 不变量如何传入)
@@ -56,6 +64,10 @@ async fn test_tx_state() -> Result<(), ProviderError> {
     let address = transaction_content.to.unwrap();
     let value = transaction_content.value;
     let data = transaction_content.calldata.heap;
+
+    println!("Caller is :{:?}",caller);
+    println!("Address is :{:?}",address);
+    println!("data is :{:?}",data);
 
     // 5. Create a new interpreter
     let mut interpreter = Runner::new_paper(
@@ -108,6 +120,7 @@ async fn test_tx_state() -> Result<(), ProviderError> {
 
     if bytecode.starts_with("0x") {
         let bytecode = hex::decode(&bytecode[2..]).expect("Invalid bytecode");
+        println!("bytecode is :{:?}",bytecode);
         let new_param = _hex_string_to_bytes("0x00000000000000000000000000000000000000000000000000001baeaf3816f6");
         // Interpret the bytecode
         let ret = interpreter.interpret_init(bytecode,new_param, true);
@@ -120,5 +133,142 @@ async fn test_tx_state() -> Result<(), ProviderError> {
     }
 
     Ok(())
+}
+
+
+#[tokio::test]
+async fn test_call_betweenDiffContract() {
+    let addr1 = "5e17b14ADd6c386305A32928F985b29bbA34Eff5";
+    let addr2 = "e2899bddFD890e320e643044c6b95B9B0b84157A";
+
+    let bytecode1 = hex::decode("608060405234801561001057600080fd5b5060e38061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060325760003560e01c8063a1c51915146037578063d46300fd146051575b600080fd5b603d606b565b60405160489190608a565b60405180910390f35b60576074565b60405160629190608a565b60405180910390f35b60006002905090565b60006001905090565b60848160a3565b82525050565b6000602082019050609d6000830184607d565b92915050565b600081905091905056fea2646970667358221220e563928ccb0a6664376561993a7a30a2cb5e8f130cec220db17bd0ee1d465f8464736f6c63430008030033").expect("Invalid bytecode");
+
+    let codehash1 = keccak256(bytecode1.clone());
+    let bytecode2 = hex::decode("608060405273ef9f1ace83dfbb8f559da621f4aea72c6eb10ebf6000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff16021790555034801561006457600080fd5b506105be806100746000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c8063312d999c1461003b578063d4b839921461006b575b600080fd5b6100556004803603810190610050919061038f565b610089565b604051610062919061044c565b60405180910390f35b610073610318565b6040516100809190610431565b60405180910390f35b6000806040516024016040516020818303038152906040527fd46300fd000000000000000000000000000000000000000000000000000000007bffffffffffffffffffffffffffffffffffffffffffffffffffffffff19166020820180517bffffffffffffffffffffffffffffffffffffffffffffffffffffffff8381831617835250505050905060006040516024016040516020818303038152906040527fa1c51915000000000000000000000000000000000000000000000000000000007bffffffffffffffffffffffffffffffffffffffffffffffffffffffff19166020820180517bffffffffffffffffffffffffffffffffffffffffffffffffffffffff8381831617835250505050905060008060008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16846040516101e0919061041a565b6000604051808303816000865af19150503d806000811461021d576040519150601f19603f3d011682016040523d82523d6000602084013e610222565b606091505b509150915060008060008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168560405161026f919061041a565b6000604051808303816000865af19150503d80600081146102ac576040519150601f19603f3d011682016040523d82523d6000602084013e6102b1565b606091505b50915091506000838060200190518101906102cc9190610366565b90506000828060200190518101906102e49190610366565b9050898b82846102f4919061047d565b6102fe919061047d565b610308919061047d565b9850505050505050505092915050565b60008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1681565b60008135905061034b81610571565b92915050565b60008151905061036081610571565b92915050565b60006020828403121561037857600080fd5b600061038684828501610351565b91505092915050565b600080604083850312156103a257600080fd5b60006103b08582860161033c565b92505060206103c18582860161033c565b9150509250929050565b6103d4816104d3565b82525050565b60006103e582610467565b6103ef8185610472565b93506103ff81856020860161050f565b80840191505092915050565b61041481610505565b82525050565b600061042682846103da565b915081905092915050565b600060208201905061044660008301846103cb565b92915050565b6000602082019050610461600083018461040b565b92915050565b600081519050919050565b600081905092915050565b600061048882610505565b915061049383610505565b9250827fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff038211156104c8576104c7610542565b5b828201905092915050565b60006104de826104e5565b9050919050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b6000819050919050565b60005b8381101561052d578082015181840152602081019050610512565b8381111561053c576000848401525b50505050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b61057a81610505565b811461058557600080fd5b5056fea2646970667358221220f2e119cc89f32f22c3824fded0cfe597808ffa846a09d4d6020ae692fd1ac79464736f6c63430008030033").expect("Invalid bytecode");
+    let codehash2 = keccak256(bytecode2.clone());
+
+    let caller = [0x5B, 0x38, 0xDa, 0x6a, 0x70, 0x1c, 0x56, 0x85, 0x45, 0xdC, 0xfc, 0xB0, 0x3F, 0xCB, 0x87, 0x5f, 0x56, 0xbe, 0xdd, 0xC4];
+    println!("caller is :{:?}",caller);
+    let origin = [0x5B, 0x38, 0xDa, 0x6a, 0x70, 0x1c, 0x56, 0x85, 0x45, 0xdC, 0xfc, 0xB0, 0x3F, 0xCB, 0x87, 0x5f, 0x56, 0xbe, 0xdd, 0xC4];
+    let address1 = <[u8;20]>::from_hex("Ef9f1ACE83dfbB8f559Da621f4aEA72C6EB10eBf").expect("invaild address");
+    let address2 = <[u8;20]>::from_hex("0498B7c793D7432Cd9dB27fb02fc9cfdBAfA1Fd3").expect("invaild address");
+    let inputdata = hex::decode("312d999c00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002").expect("Invalid bytecode");
+
+
+    // println!("caller is :{:?}",caller);
+    // println!("inputdata is :{:?}",inputdata);
+    // 第一个合约，被调用合约，没有storage
+    let mut account_state1 = AccountState::default();
+    // account_state1.code_hash = codehash1;
+    let mut account_state2 = AccountState{
+        nonce: 0,
+        balance: [0u8;32],
+        storage: HashMap::new(),
+        code_hash: codehash2,
+    };
+    account_state2.storage.insert(<[u8; 32]>::from(to_h256("0000000000000000000000000000000000000000000000000000000000000000")),<[u8; 32]>::from(to_h256("000000000000000000000000ef9f1ace83dfbb8f559da621f4aea72c6eb10ebf")));
+    let mut state = EvmState::new(None);
+    state.accounts.insert(<[u8; 20]>::from(Address::from(address1)), account_state1.clone());
+    state.accounts.insert(<[u8; 20]>::from(Address::from(address2)), account_state2.clone());
+
+    let mut interpreter = Runner::new(
+        caller,
+        Some(origin),
+        Some(address1),
+        None,
+        None,
+        Some(state.clone()),
+        None
+    );
+    // interpreter.modify_account_state(address1,account_state1);
+
+
+    let ret = interpreter.interpret1(bytecode1, true,true);
+    // println!("After interpreter,account_state Is {:?}",interpreter.state.codes);
+    // println!("EVMState is :{:?}",interpreter.state);
+
+    if ret.is_ok(){
+        println!("oplist_len is :{:?}",interpreter.op_list.len());
+        println!("oplist is :{:?}",interpreter.op_list);
+
+    }
+    else{
+        println!("ret is {:?}",ret);
+    }
+
+    interpreter.caller = address2;
+    interpreter.origin = origin;
+    interpreter.address = address1;
+    interpreter.calldata = Memory::new(Option::from(vec![0u8]));
+
+
+    let ret2 = interpreter.interpret1(bytecode2, true,true);
+    if ret2.is_ok(){
+        println!("oplist_len is :{:?}",interpreter.op_list.len());
+        println!("oplist is :{:?}",interpreter.op_list);
+
+    }
+    else{
+        println!("ret is {:?}",ret2.unwrap());
+    }
+
+
+}
+#[test]
+fn test_keccak256(){
+    let mut bytecode1 = "60606040523415600e57600080fd5b603580601b6000396000f3006060604052600080fd00a165627a7a72305820395f38545a3c60d8fb3628f35d8ed9df7363257889a1311469f57957730033870029";
+    let mut hash = keccak256(bytecode1);
+    println!("codehash is :{:?}",hash);
+}
+
+#[test]
+fn test_Message_call(){
+    // Address to call contract.
+    let user1 = <[u8;20]>::from_hex("5e17b14ADd6c386305A32928F985b29bbA34Eff5").expect("invalid address");
+    let user2 = <[u8;20]>::from_hex("e2899bddFD890e320e643044c6b95B9B0b84157A").expect("invalid address");
+
+    // Contracts and their bytecode.
+    let bytecode1 = hex::decode("608060405234801561001057600080fd5b5060e38061001f6000396000f3fe6080604052348015600f57600080fd5b506004361060325760003560e01c8063a1c51915146037578063d46300fd146051575b600080fd5b603d606b565b60405160489190608a565b60405180910390f35b60576074565b60405160629190608a565b60405180910390f35b60006002905090565b60006001905090565b60848160a3565b82525050565b6000602082019050609d6000830184607d565b92915050565b600081905091905056fea2646970667358221220e563928ccb0a6664376561993a7a30a2cb5e8f130cec220db17bd0ee1d465f8464736f6c63430008030033").expect("Invalid bytecode");
+    let bytecode2 = hex::decode("608060405273ef9f1ace83dfbb8f559da621f4aea72c6eb10ebf6000806101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff16021790555034801561006457600080fd5b506105be806100746000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c8063312d999c1461003b578063d4b839921461006b575b600080fd5b6100556004803603810190610050919061038f565b610089565b604051610062919061044c565b60405180910390f35b610073610318565b6040516100809190610431565b60405180910390f35b6000806040516024016040516020818303038152906040527fd46300fd000000000000000000000000000000000000000000000000000000007bffffffffffffffffffffffffffffffffffffffffffffffffffffffff19166020820180517bffffffffffffffffffffffffffffffffffffffffffffffffffffffff8381831617835250505050905060006040516024016040516020818303038152906040527fa1c51915000000000000000000000000000000000000000000000000000000007bffffffffffffffffffffffffffffffffffffffffffffffffffffffff19166020820180517bffffffffffffffffffffffffffffffffffffffffffffffffffffffff8381831617835250505050905060008060008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16846040516101e0919061041a565b6000604051808303816000865af19150503d806000811461021d576040519150601f19603f3d011682016040523d82523d6000602084013e610222565b606091505b509150915060008060008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168560405161026f919061041a565b6000604051808303816000865af19150503d80600081146102ac576040519150601f19603f3d011682016040523d82523d6000602084013e6102b1565b606091505b50915091506000838060200190518101906102cc9190610366565b90506000828060200190518101906102e49190610366565b9050898b82846102f4919061047d565b6102fe919061047d565b610308919061047d565b9850505050505050505092915050565b60008054906101000a900473ffffffffffffffffffffffffffffffffffffffff1681565b60008135905061034b81610571565b92915050565b60008151905061036081610571565b92915050565b60006020828403121561037857600080fd5b600061038684828501610351565b91505092915050565b600080604083850312156103a257600080fd5b60006103b08582860161033c565b92505060206103c18582860161033c565b9150509250929050565b6103d4816104d3565b82525050565b60006103e582610467565b6103ef8185610472565b93506103ff81856020860161050f565b80840191505092915050565b61041481610505565b82525050565b600061042682846103da565b915081905092915050565b600060208201905061044660008301846103cb565b92915050565b6000602082019050610461600083018461040b565b92915050565b600081519050919050565b600081905092915050565b600061048882610505565b915061049383610505565b9250827fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff038211156104c8576104c7610542565b5b828201905092915050565b60006104de826104e5565b9050919050565b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b6000819050919050565b60005b8381101561052d578082015181840152602081019050610512565b8381111561053c576000848401525b50505050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b61057a81610505565b811461058557600080fd5b5056fea2646970667358221220f2e119cc89f32f22c3824fded0cfe597808ffa846a09d4d6020ae692fd1ac79464736f6c63430008030033").expect("Invalid bytecode");
+    let address1 = <[u8;20]>::from_hex("Ef9f1ACE83dfbB8f559Da621f4aEA72C6EB10eBf").expect("invaild address");
+    let address2 = <[u8;20]>::from_hex("0498B7c793D7432Cd9dB27fb02fc9cfdBAfA1Fd3").expect("invaild address");
+    let inputdata = hex::decode("312d999c00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002").expect("Invalid bytecode");
+
+
+    //Create state
+    let mut account_state1 = AccountState::default();
+    let mut account_state2 = AccountState::default();
+    account_state2.storage.insert(<[u8; 32]>::from(to_h256("0000000000000000000000000000000000000000000000000000000000000000")),<[u8; 32]>::from(to_h256("000000000000000000000000ef9f1ace83dfbb8f559da621f4aea72c6eb10ebf")));
+    let mut state = EvmState::new(None);
+    state.accounts.insert(<[u8; 20]>::from(Address::from(address1)), account_state1.clone());
+    state.accounts.insert(<[u8; 20]>::from(Address::from(address2)), account_state2.clone());
+
+    //Runner,to deploy the first contract.
+    let mut interpreter = Runner::new(
+        address2,
+        Some(user1),
+        Some(address1),
+        None,
+        None,
+        Some(state.clone()),
+        None
+    );
+
+    let ret = interpreter.interpret1(bytecode1, true,true);
+    println!("acoounts' bytecode is :{:?}",&interpreter.state);
+
+    interpreter.caller = user1;
+    interpreter.origin = user1;
+    interpreter.address = address2;
+
+    let ret2 = interpreter.interpret1(bytecode2, true,true);
+    println!("acoounts' bytecode is :{:?}",&interpreter.state);
+
+
+    // Message call
+    let ret3 = interpreter.call(address2, [0u8;32], inputdata, 0,false).unwrap();
+
+
+
 }
 

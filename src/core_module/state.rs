@@ -67,11 +67,24 @@ impl fmt::Debug for AccountState {
     }
 }
 
+impl AccountState {
+    pub fn default() -> Self{
+        let mut instance = Self{
+            nonce:0,
+            balance: [0u8;32],
+            storage: Default::default(),
+            code_hash: [0u8;32],
+        };
+        instance
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 /*                                 Log struct                                 */
 /* -------------------------------------------------------------------------- */
 
 /// Represents a log entry in the Ethereum Virtual Machine (EVM) state.
+#[derive(Clone)]
 pub struct Log {
     /// The address of the contract that generated the log.
     pub address: [u8; 20],
@@ -122,7 +135,7 @@ impl fmt::Debug for Log {
 /* -------------------------------------------------------------------------- */
 
 /// Represents the state of the Ethereum Virtual Machine (EVM).
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 pub struct EvmState {
     /// A mapping of account addresses to their respective account states.
     pub accounts: HashMap<[u8; 20], AccountState>,
@@ -349,6 +362,7 @@ impl EvmState {
     }
 
     pub fn put_code_at(&mut self, address: [u8; 20], code: Vec<u8>) -> Result<(), ExecutionError> {
+        // 这个地方最好加一个区分creation code与runtime code的区分，如果是creation code则跳过init code只存储runtime ，如果是runtime则直接存储runtime
         let code_hash = self.put_code(code)?;
 
         match self.accounts.get_mut(&address) {
@@ -370,11 +384,41 @@ impl EvmState {
         if self.static_mode {
             return Err(ExecutionError::StaticCallStateChanged);
         }
+        println!("wuxizhi ois successFul {:?}",code);
 
         let code_hash = keccak256(&code);
+        //====================================插入的不应该是bytecode而应该是runtimecode===============================================//
         self.codes.insert(code_hash, code);
         Ok(code_hash)
     }
+
+    // fn put_code(&mut self, code: Vec<u8>) -> Result<[u8; 32], ExecutionError> {
+    //     // Check if static mode is enabled
+    //     if self.static_mode {
+    //         return Err(ExecutionError::StaticCallStateChanged);
+    //     }
+    //     println!("wuxizhi ois successFul");
+    //
+    //     let code_hash = keccak256(&code);
+    //     //====================================插入的不应该是bytecode而应该是runtimecode===============================================//
+    //
+    //     if(!is_creation){
+    //         self.codes.insert(code_hash, code);
+    //
+    //     }else{
+    //         let mut runtimecode = vec![];
+    //         if let Some(pos) = code.iter().position(|&x| x == 254) {
+    //             // 取出254后面的元素
+    //             runtimecode = Vec::from(&code[pos + 1..]);
+    //         }
+    //
+    //         println!("runtimcode is {:?}",runtimecode);
+    //         self.codes.insert(code_hash, runtimecode);
+    //
+    //     }
+    //
+    //     Ok(code_hash)
+    // }
 
     /// Print the state of the EVM
     /// This function is used for debugging purposes.
